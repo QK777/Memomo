@@ -25,6 +25,23 @@ function wrapSelectionWithSpan(range, styles){
     sel.addRange(r);
   }
 }
+
+// --- Color helper ---
+// Sticky note styling uses RGBA backgrounds; keep this in the main scope.
+function hexToRgba(hex, a){
+  let h = String(hex || "#ffffff").trim();
+  if (h.startsWith("rgba") || h.startsWith("rgb")) return h; // already rgb/rgba
+  h = h.replace(/^#/, "");
+  if (h.length === 3) h = h.split("").map(ch => ch + ch).join("");
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  const rr = Number.isFinite(r) ? r : 255;
+  const gg = Number.isFinite(g) ? g : 255;
+  const bb = Number.isFinite(b) ? b : 255;
+  const aa = (a === 0) ? 0 : (Number.isFinite(Number(a)) ? Number(a) : 1);
+  return `rgba(${rr},${gg},${bb},${aa})`;
+}
 /* =========================
    Selection helpers (v6.20)
    - select/btn UI steals focus -> keep last selection per editor
@@ -197,6 +214,12 @@ const fileInput = $("#fileInput");
   let index = 0;
   let mode = "edit"; // edit | view
 
+  // View mode: allow moving sticky notes without enabling editing (OFF by default)
+  let viewMoveEnabled = false;
+  let viewFabEl = null;
+  let btnViewMove = null;
+  let btnExitView = null;
+
   // --- active note selection (for Note Panel) ---
   let activeNoteId = null;
 
@@ -215,23 +238,6 @@ const fileInput = $("#fileInput");
   function getNoteEl(id){
     if (!id) return null;
     return notesLayer.querySelector(`.note[data-id="${id}"]`);
-  }
-
-  // Convert hex color (#rgb/#rrggbb) to rgba(..., alpha)
-  function hexToRgba(hex, a){
-    const alphaNum = Number(a);
-    const alpha = Number.isFinite(alphaNum) ? Math.max(0, Math.min(1, alphaNum)) : 1;
-    if (typeof hex !== 'string') hex = '#ffffff';
-    const s = hex.trim();
-    // If already rgb/rgba, keep as-is
-    if (s.startsWith('rgba(') || s.startsWith('rgb(')) return s;
-    let h = s.replace('#','').replace(/^0x/i,'');
-    if (h.length === 3) h = h.split('').map(c => c + c).join('');
-    if (h.length !== 6) h = 'ffffff';
-    const r = parseInt(h.slice(0,2),16) || 255;
-    const g = parseInt(h.slice(2,4),16) || 255;
-    const b = parseInt(h.slice(4,6),16) || 255;
-    return `rgba(${r},${g},${b},${alpha})`;
   }
 
   function applyNoteStyle(el, n){
@@ -346,12 +352,72 @@ const fileInput = $("#fileInput");
     } else {
       if (pageMemo) pageMemo?.setAttribute("contenteditable", "true");
     }
+    // View mode conveniences
+    if (mode === 'view') viewMoveEnabled = false;
+    ensureViewFab();
+    updateViewFab();
+    try{ frame.style.touchAction = (mode === 'view') ? 'none' : ''; }catch(_){ }
+
     renderNotes();
 
     // ページメモ機能は削除
   }
 
   function isViewMode() { return mode === "view"; }
+
+  function showPageWrap(i){
+    if (!pages.length){ showPage(0); return; }
+    const len = pages.length;
+    const ni = ((i % len) + len) % len;
+    showPage(ni);
+  }
+  function goNext(){ showPageWrap(index + 1); }
+  function goPrev(){ showPageWrap(index - 1); }
+
+  function ensureViewFab(){
+    if (viewFabEl) return;
+    viewFabEl = document.createElement('div');
+    viewFabEl.id = 'viewFab';
+    viewFabEl.setAttribute('aria-hidden','true');
+
+    btnViewMove = document.createElement('button');
+    btnViewMove.type = 'button';
+    btnViewMove.className = 'btn view-fab-btn';
+    btnViewMove.textContent = '付箋移動: OFF';
+    btnViewMove.setAttribute('aria-pressed','false');
+    btnViewMove.addEventListener('click', (e) => {
+      e.preventDefault();
+      viewMoveEnabled = !viewMoveEnabled;
+      updateViewFab();
+      renderNotes();
+    });
+
+    btnExitView = document.createElement('button');
+    btnExitView.type = 'button';
+    btnExitView.className = 'btn ghost view-fab-btn';
+    btnExitView.textContent = '設定モードへ';
+    btnExitView.addEventListener('click', (e) => {
+      e.preventDefault();
+      setMode('edit');
+    });
+
+    viewFabEl.appendChild(btnViewMove);
+    viewFabEl.appendChild(btnExitView);
+    document.body.appendChild(viewFabEl);
+    updateViewFab();
+  }
+
+  function updateViewFab(){
+    if (!viewFabEl) return;
+    const show = isViewMode();
+    viewFabEl.style.display = show ? 'flex' : 'none';
+    viewFabEl.setAttribute('aria-hidden', show ? 'false' : 'true');
+    if (btnViewMove){
+      btnViewMove.textContent = viewMoveEnabled ? '付箋移動: ON' : '付箋移動: OFF';
+      btnViewMove.classList.toggle('on', !!viewMoveEnabled);
+      btnViewMove.setAttribute('aria-pressed', viewMoveEnabled ? 'true' : 'false');
+    }
+  }
 
   function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
 
@@ -648,6 +714,47 @@ const fileInput = $("#fileInput");
       applyNoteStyle(el, n);
       if (n.id === activeNoteId) el.classList.add("active");
 
+      /* view-move */
+      if (isViewMode()) {
+        el.addEventListener("pointerdown", (e) => {
+          if (!viewMoveEnabled) return;
+          // allow touch + left click
+          if (e.pointerType !== "touch" && e.button !== 0) return;
+          // don't hijack if user taps on the panel
+          if (e.target?.closest?.("#notePanel")) return;
+          e.preventDefault();
+          e.stopPropagation();
+          setActiveNote(n.id);
+          bringNoteFront(n.id);
+
+          const startLeft = parseFloat(el.style.left) || px.x;
+          const startTopDisp = parseFloat(el.style.top) || (px.y + headPx);
+          const start = { x: e.clientX, y: e.clientY, left: startLeft, top: startTopDisp };
+
+          trackPointer(e, (ev) => {
+            const nx = start.left + (ev.clientX - start.x);
+            const ny = start.top + (ev.clientY - start.y);
+            el.style.left = nx + "px";
+            el.style.top = ny + "px";
+          }, () => {
+            const finalPx = {
+              x: parseFloat(el.style.left) || 0,
+              // stored note y is the original top (including hidden header)
+              y: (parseFloat(el.style.top) || 0) - headPx,
+              w: parseFloat(el.style.width) || px.w,
+              // stored height includes hidden header too
+              h: (parseFloat(el.style.height) || 0) + headPx
+            };
+            const norm = pxToNoteNorm(finalPx);
+            n.nx = clamp(norm.nx, 0, 1);
+            n.ny = clamp(norm.ny, 0, 1);
+            n.nw = clamp(norm.nw, 0.05, 1);
+            n.nh = clamp(norm.nh, 0.05, 1);
+            saveNotesSoon();
+          });
+        }, { capture:true });
+      }
+
       // header (edit only)
       if (!isViewMode()) {
         const top = document.createElement("div");
@@ -770,6 +877,24 @@ const fileInput = $("#fileInput");
   }
 
   function addNote() {
+    // Allow adding notes even when no images are loaded (create a blank page).
+    if (!pages.length){
+      pages.push({
+        id: uid(),
+        name: "(blank)",
+        mime: "",
+        blob: null,
+        url: "",
+        memoHtml: "",
+        notes: []
+      });
+      index = 0;
+      updatePageInfo();
+      renderThumbs();
+      // showPage will set up the view; it is safe even with empty src.
+      showPage(0);
+    }
+
     const p = currentPage();
     if (!p) return;
     p.notes = p.notes || [];
@@ -1221,6 +1346,94 @@ window.addEventListener("dragenter", (e) => {
     }
   }, { capture:true });
 
+  // Touch navigation (iPad / mobile) in view mode:
+  // - Tap: same as Space (next)
+  // - Swipe left/right: same as →/← buttons (next/prev)
+  (function setupTouchNav(){
+    let pStart = null;
+    let tStart = null;
+    let suppressClickUntil = 0;
+
+    const isInteractiveTarget = (t) => {
+      if (!t) return false;
+      return !!(
+        t.closest?.('.note') ||
+        t.closest?.('#notePanel') ||
+        t.closest?.('button') ||
+        t.closest?.('input') ||
+        t.closest?.('textarea') ||
+        t.closest?.('a')
+      );
+    };
+
+    const handleGesture = (sx, sy, ex, ey, dt) => {
+      if (dt > 700) return false;
+      const dx = ex - sx;
+      const dy = ey - sy;
+      const adx = Math.abs(dx);
+      const ady = Math.abs(dy);
+      const SW = 40;
+      const TAP = 10;
+
+      if (adx > SW && adx > ady * 1.2){
+        if (dx < 0) goNext();
+        else goPrev();
+        return true;
+      }
+      if (adx < TAP && ady < TAP){
+        goNext();
+        return true;
+      }
+      return false;
+    };
+
+    // Pointer Events (works on most iPadOS). Allow pen too, but ignore mouse.
+    frame.addEventListener('pointerdown', (e) => {
+      if (!isViewMode()) return;
+      if (e.pointerType === 'mouse') return;
+      if (isInteractiveTarget(e.target)) return;
+      pStart = { id: e.pointerId, x: e.clientX, y: e.clientY, t: Date.now() };
+      try{ e.preventDefault(); }catch(_){ }
+    }, { capture:true });
+
+    frame.addEventListener('pointerup', (e) => {
+      if (!pStart || e.pointerId !== pStart.id) return;
+      const handled = handleGesture(pStart.x, pStart.y, e.clientX, e.clientY, Date.now() - pStart.t);
+      pStart = null;
+      if (handled) suppressClickUntil = Date.now() + 450;
+    }, { capture:true });
+
+    // Touch Events fallback (some iOS builds are flaky with Pointer Events)
+    frame.addEventListener('touchstart', (e) => {
+      if (!isViewMode()) return;
+      if (isInteractiveTarget(e.target)) return;
+      const touch = e.changedTouches && e.changedTouches[0];
+      if (!touch) return;
+      tStart = { x: touch.clientX, y: touch.clientY, t: Date.now() };
+      try{ e.preventDefault(); }catch(_){ }
+    }, { capture:true, passive:false });
+
+    frame.addEventListener('touchend', (e) => {
+      if (!tStart) return;
+      const touch = e.changedTouches && e.changedTouches[0];
+      if (!touch) { tStart = null; return; }
+      const handled = handleGesture(tStart.x, tStart.y, touch.clientX, touch.clientY, Date.now() - tStart.t);
+      tStart = null;
+      if (handled) suppressClickUntil = Date.now() + 450;
+    }, { capture:true });
+
+    // Click fallback on coarse pointers (tap-to-next)
+    frame.addEventListener('click', (e) => {
+      if (!isViewMode()) return;
+      if (Date.now() < suppressClickUntil) return;
+      try{
+        if (window.matchMedia && !window.matchMedia('(pointer: coarse)').matches) return;
+      }catch(_){ }
+      if (isInteractiveTarget(e.target)) return;
+      goNext();
+    }, true);
+  })();
+
   // --- UI events ---
   btnAddImages.addEventListener("click", () => fileInput.click());
   fileInput.addEventListener("change", () => {
@@ -1228,8 +1441,8 @@ window.addEventListener("dragenter", (e) => {
     fileInput.value = "";
   });
 
-  btnPrev.addEventListener("click", () => showPage(index - 1));
-  btnNext.addEventListener("click", () => showPage(index + 1));
+  btnPrev.addEventListener("click", () => goPrev());
+  btnNext.addEventListener("click", () => goNext());
 
   btnAddNote.addEventListener("click", () => { if (!isViewMode()) addNote(); });
 
@@ -1322,9 +1535,9 @@ window.addEventListener("dragenter", (e) => {
   // Keyboard
   document.addEventListener("keydown", (e) => {
     if (e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.isContentEditable || e.target.closest?.(".note-editor"))) return;
-    if (e.key === " "){ e.preventDefault(); showPage(index + 1); }
-    if (e.key === "ArrowLeft") showPage(index - 1);
-    if (e.key === "ArrowRight") showPage(index + 1);
+    if (e.key === " "){ e.preventDefault(); goNext(); }
+    if (e.key === "ArrowLeft") goPrev();
+    if (e.key === "ArrowRight") goNext();
     if (e.key.toLowerCase() === "n") { if (!isViewMode()) addNote(); }
     if (e.key.toLowerCase() === "v") setMode(isViewMode() ? "edit" : "view");
   });

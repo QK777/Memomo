@@ -215,7 +215,7 @@ display:grid;
   display:flex;
   flex-direction:column;
   gap:10px;
-  touch-action: none;
+  touch-action: manipulation;
   -webkit-user-select:none; user-select:none; -webkit-touch-callout:none;
 }
 
@@ -228,7 +228,7 @@ display:grid;
   border: 1px solid rgba(255,255,255,0.10);
   background: rgba(0,0,0,0.22);
   cursor: grab;
-  touch-action: none;
+  touch-action: manipulation;
   position:relative;
 }
 .thumb:active{ cursor: grabbing; }
@@ -303,7 +303,7 @@ display:grid;
   overflow:hidden;
   min-width: 140px;
   min-height: 90px;
-  touch-action: none;
+  touch-action: manipulation;
   display:flex;
   flex-direction: column;
   color: inherit;
@@ -313,6 +313,7 @@ display:grid;
   outline-offset: -2px;
 }
 .note-top{
+  touch-action: none;
   height: var(--noteHeadH);
   position: relative;
   display:flex;
@@ -339,17 +340,19 @@ display:grid;
 }
 .note-x:hover{ background: rgba(255,255,255,0.10); border-color: rgba(140,200,255,0.35); }
 
-
-/* note body (fix: was corrupted) */
 .note-body{
-  flex: 1 1 auto;
-  min-height: 0;
-  padding: 10px 12px;
+  flex:1;
+  min-height:0;
+  padding: 8px 10px 10px;
   background: transparent;
 }
 
 /* contenteditable editor */
 .note-editor{
+  cursor:text;
+  -webkit-user-select:text;
+  user-select:text;
+
   width:100%;
   height:100%;
   outline:none;
@@ -369,6 +372,7 @@ display:grid;
 }
 
 .resizer{
+  touch-action: none;
   position:absolute;
   right:6px; bottom:6px;
   width:14px; height:14px;
@@ -512,7 +516,13 @@ body.mode-view.memo-peek .memo-editor{ pointer-events:none; }
   color: rgba(255,255,255,0.70);
 }
 
+/* v6.14: View mode keeps note header height (no content shift) */
+/* v6.14: note editor */
 .note-editor{
+  cursor:text;
+  -webkit-user-select:text;
+  user-select:text;
+
   width:100%;
   height:100%;
   outline:none;
@@ -526,6 +536,10 @@ body.mode-view.memo-peek .memo-editor{ pointer-events:none; }
   word-break: break-word;
 }
 body.mode-view .note-editor{
+  cursor:text;
+  -webkit-user-select:text;
+  user-select:text;
+
   pointer-events:none;
   user-select:none;
 }
@@ -557,6 +571,7 @@ body.mode-view .note-editor{
 .note-bold.on{ background: rgba(0,0,0,0.42); }
 .note-tools input[type="range"]{ width: 90px; }
 
+/* v6.17: thumbnail title ellipsis (no scrollbar) */
 .tmeta{ min-width:0; }
 .tname{
   overflow:hidden;
@@ -569,7 +584,9 @@ body.mode-view .note-editor{
   white-space: nowrap;
 }
 
+/* v6.17: print */
 
+/* v6.18: print helpers (build DOM snapshot that matches view mode) */
 .print-root{ display:none; }
 .print-stage{
   position: relative;
@@ -604,12 +621,15 @@ body.mode-view .note-editor{
 @media print{
   @page{ margin: 10mm; }
   body{ background:#fff !important; color:#000 !important; }
+  /* hide the app UI */
   body > :not(#printRoot){ display:none !important; }
+  /* show print snapshot */
   #printRoot{ display:block !important; }
   #printRoot .print-root{ display:block !important; }
   #printRoot{ width: 100% !important; }
 }
 
+/* v6.19: note toolbar UI */
 .note-tools select{
   height: 24px;
   border-radius: 8px;
@@ -618,4 +638,47 @@ body.mode-view .note-editor{
   color: rgba(255,255,255,0.92);
   padding: 0 8px;
   font-size: 12px;
+}
+
+
+/* View mode UI */
+body.mode-view .topbar{
+  display:none;
+}
+
+/* iPad / notch safe area when topbar is hidden */
+body.mode-view{
+  padding-top: env(safe-area-inset-top);
+}
+
+#viewFab{
+  position: fixed;
+  right: 12px;
+  /* place it near the bottom like v3 (user preferred) */
+  bottom: calc(18px + env(safe-area-inset-bottom));
+  display: none;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 9999;
+}
+
+#viewFab .view-fab-btn{
+  padding: 10px 12px;
+  border-radius: 14px;
+  font-weight: 800;
+}
+
+#viewFab .view-fab-btn.on{
+  border-color: rgba(140,200,255,0.55);
+}
+
+/* editor usability */
+body.mode-edit .note-editor{
+  cursor:text;
+  -webkit-user-select:text;
+  user-select:text;
+
+  cursor: text;
+  -webkit-user-select: text;
+  user-select: text;
 }
